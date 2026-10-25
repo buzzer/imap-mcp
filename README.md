@@ -135,8 +135,10 @@ ICLOUD_MAIL_PASSWORD=abcd-efgh-ijkl-mnop   # app-specific password
 
 The password is an app-specific password from account.apple.com
 (Sign-In and Security → App-Specific Passwords), not the Apple ID password.
-`imap.mail.me.com:993` is preconfigured for the account name `icloud`; any other
-server is set with `<NAME>_IMAP_HOST`.
+`imap.mail.me.com:993` is preconfigured for the account name `icloud` and
+`mail.your-server.de:993` for `hetzner`. Every other account name needs
+`<NAME>_IMAP_HOST`; the server never guesses a host, so a password is not sent to the
+wrong provider.
 
 ## Security
 
@@ -145,6 +147,11 @@ server is set with `<NAME>_IMAP_HOST`.
 - Mail content is untrusted text. The server instructions tell the model not to
   follow requests contained in mails. Since nothing can be sent or deleted, the
   possible damage is limited to drafts and to leaking mail content to the model.
+- HTML mail is converted to text for the model without content a reader would not see
+  (`display:none`, `hidden`, `opacity:0`, collapsed preheaders, `script`/`style`/`head`),
+  which removes the most common hiding places for invisible prompt injection. Text that
+  is only unreadable (white on white, tiny fonts set on child elements) is still passed
+  on, so the protection is a mitigation, not a guarantee.
 - Search terms containing control characters (CR/LF) are rejected, so they cannot
   inject additional IMAP commands. Recipient addresses with line breaks are rejected.
 - The HTTP transport uses a single static bearer token without rate limiting. Use it

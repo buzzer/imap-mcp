@@ -88,6 +88,49 @@ class BodyTests(unittest.TestCase):
         self.assertNotIn("x{}", body)
 
 
+class HtmlToTextTests(unittest.TestCase):
+    def test_hidden_content_is_dropped(self):
+        for label, html in {
+            "display:none": '<div style="display:none">IGNORE</div>',
+            "important and spaces": '<div style="display: none !important">IGNORE</div>',
+            "nested": '<div style="display:none"><p>IGNORE</p><span>IGNORE</span></div>',
+            "hidden attribute": "<p hidden>IGNORE</p>",
+            "visibility": '<span style="visibility:hidden">IGNORE</span>',
+            "opacity zero": '<span style="opacity:0">IGNORE</span>',
+            "collapsed preheader": '<div style="max-height:0;overflow:hidden">IGNORE</div>',
+            "mso-hide": '<span style="mso-hide:all">IGNORE</span>',
+            "zero font on own text": '<div style="font-size:0px">IGNORE</div>',
+            "script": "<script>IGNORE</script>",
+            "unclosed optional-end element": '<p style="display:none">IGNORE<p>',
+        }.items():
+            with self.subTest(label):
+                self.assertEqual(mc.html_to_text(html + "Hello"), "Hello")
+
+    def test_visible_content_is_kept(self):
+        for label, html in {
+            "opacity below one": '<span style="opacity:0.5">Hello</span>',
+            "collapsed without overflow": '<div style="max-height:0">Hello</div>',
+            "zero-font layout wrapper": '<div style="font-size:0"><div style="font-size:16px">Hello</div></div>',
+            "small font": '<p style="font-size:0.9em">Hello</p>',
+        }.items():
+            with self.subTest(label):
+                self.assertEqual(mc.html_to_text(html), "Hello")
+
+    def test_missing_end_head_does_not_swallow_body(self):
+        html = "<html><head><title>x</title><body><p>Hello</p></body></html>"
+        self.assertEqual(mc.html_to_text(html), "Hello")
+
+    def test_head_ended_by_closing_html(self):
+        self.assertEqual(mc.html_to_text("<html><head><title>x</title></html><p>Hello</p>"), "Hello")
+
+    def test_head_content_is_not_shown(self):
+        html = "<head><title>Title</title><style>p{}</style></head><body><p>Hello</p></body>"
+        self.assertEqual(mc.html_to_text(html), "Hello")
+
+    def test_unclosed_style_hides_rest_like_a_browser(self):
+        self.assertEqual(mc.html_to_text("<p>before</p><style>p{}<p>after</p>"), "before")
+
+
 class MiscTests(unittest.TestCase):
     def test_imap_date(self):
         self.assertEqual(mc.imap_date("2026-03-05"), "05-Mar-2026")
@@ -265,6 +308,19 @@ class AccountLoadingTests(unittest.TestCase):
         self.assertEqual(ic.from_name, "Jane Doe")
         self.assertTrue(ic.is_allowed_sender("jane@icloud.com"))
         self.assertFalse(ic.is_allowed_sender("jane"))
+
+    def test_unknown_account_without_host_is_rejected(self):
+        # The password must never be sent to a guessed server.
+        with self.assertRaises(mc.MailError) as cm:
+            self._load("ACCOUNTS=hetzner,gmail\nMAIL_USER=a@b.de\nMAIL_PASSWORD=x\n"
+                       "GMAIL_MAIL_USER=me@gmail.com\nGMAIL_MAIL_PASSWORD=secret\n")
+        self.assertIn("GMAIL_IMAP_HOST", str(cm.exception))
+
+    def test_unknown_account_with_explicit_host(self):
+        acc = self._load("ACCOUNTS=hetzner,gmail\nMAIL_USER=a@b.de\nMAIL_PASSWORD=x\n"
+                         "GMAIL_MAIL_USER=me@gmail.com\nGMAIL_MAIL_PASSWORD=secret\n"
+                         "GMAIL_IMAP_HOST=imap.gmail.com\n")
+        self.assertEqual(acc["gmail"].imap_host, "imap.gmail.com")
 
     def test_missing_icloud_password(self):
         with self.assertRaises(mc.MailError) as cm:

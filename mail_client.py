@@ -107,10 +107,14 @@ class MailConfig:
         missing = [prefix + k for k in ("MAIL_USER", "MAIL_PASSWORD") if not get(k)]
         if missing:
             raise MailError(f"Account {name!r}: missing configuration {missing}.")
-        default_host = DEFAULT_HOSTS.get(name.lower(), "mail.your-server.de")
+        imap_host = get("IMAP_HOST", DEFAULT_HOSTS.get(name.lower(), ""))
+        if not imap_host:
+            # Never guess a server: the password would be sent to the wrong provider.
+            raise MailError(f"Account {name!r}: {prefix}IMAP_HOST is not set and there is "
+                            "no default server for this account name.")
         return cls(
             name=name,
-            imap_host=get("IMAP_HOST", default_host),
+            imap_host=imap_host,
             imap_port=_int(get("IMAP_PORT", "993"), prefix + "IMAP_PORT"),
             user=get("MAIL_USER"),
             password=get("MAIL_PASSWORD"),
@@ -346,37 +350,103 @@ def imap_date(iso_date: str) -> str:
     return f"{dt.day:02d}-{_MONTHS[dt.month - 1]}-{dt.year}"
 
 
+# Elements without content or end tag.
+_VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+              "meta", "source", "track", "wbr"}
+# Elements whose end tag may be omitted; a new one of the same kind closes the previous.
+_OPTIONAL_END_TAGS = {"p", "li", "tr", "td", "th", "dt", "dd", "option"}
+# Elements that may appear inside <head>; anything else implicitly ends it.
+_HEAD_TAGS = {"title", "meta", "link", "style", "script", "base", "noscript", "template"}
+# Elements whose content is never shown to the reader.
+_NEVER_SHOWN_TAGS = {"script", "style", "head", "template"}
+
+# Inline styles that hide an element and everything in it from the reader, but not from
+# a parser (also used for invisible prompt injection and "preheader" hacks). Matched
+# against a normalized style string (lowercase, no whitespace, no !important).
+_HIDDEN_STYLE_RE = re.compile(
+    r"(?:^|;)(?:display:none|visibility:(?:hidden|collapse)|mso-hide:all|opacity:0(?![.\d]))")
+_COLLAPSED_STYLE_RE = re.compile(r"(?:^|;)max-height:0(?:px|pt|em|rem|%)?(?=;|$)")
+# font-size:0 is also used on layout wrappers whose children set their own size, so
+# it only hides the element's own text, not its descendants.
+_ZERO_FONT_RE = re.compile(r"(?:^|;)font-size:0(?:px|pt|em|rem|%)?(?=;|$)")
+
+
+def _normalized_style(attrs) -> str:
+    return re.sub(r"\s+|!important", "", (dict(attrs).get("style") or "").lower())
+
+
+def _is_hidden(attrs) -> bool:
+    if "hidden" in dict(attrs):
+        return True
+    style = _normalized_style(attrs)
+    return bool(_HIDDEN_STYLE_RE.search(style)
+                or (_COLLAPSED_STYLE_RE.search(style) and "overflow:hidden" in style))
+
+
 class _HTMLToText(HTMLParser):
+    """Converts HTML to text, leaving out what a reader would not see.
+
+    Keeps a stack of open elements so that hidden content (display:none, script,
+    style, head, ...) is dropped together with everything nested in it, and so that
+    missing end tags (common in mail HTML) cannot swallow the rest of the message.
+    """
+
     _BLOCK = {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6",
               "blockquote", "table", "section", "article", "header", "footer"}
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
-        self._skip = 0
+        # open elements: (tag, hidden, own text hidden)
+        self._open: list[tuple[str, bool, bool]] = []
+        self._hidden = 0  # number of hidden elements on the stack
+        self._in_head = False
+
+    def _pop_to(self, index: int) -> None:
+        """Close the open element at `index` and everything opened after it."""
+        for tag, hidden, _ in self._open[index:]:
+            self._hidden -= hidden
+            if tag == "head":
+                self._in_head = False
+        del self._open[index:]
 
     def handle_starttag(self, tag, attrs):
-        if tag in ("script", "style", "head"):
-            self._skip += 1
-        elif tag in self._BLOCK:
-            self.parts.append("\n")
-        if tag == "li":
-            self.parts.append("- ")
+        if self._in_head and tag not in _HEAD_TAGS and tag != "head":
+            # <body> or any content element ends a head whose </head> is missing.
+            self._pop_to(next(i for i, (t, _, _) in enumerate(self._open) if t == "head"))
+        hidden = tag in _NEVER_SHOWN_TAGS or _is_hidden(attrs)
+        if self._hidden == 0 and not hidden:
+            if tag in self._BLOCK:
+                self.parts.append("\n")
+            if tag == "li":
+                self.parts.append("- ")
+        if tag in _VOID_TAGS:
+            return
+        if tag in _OPTIONAL_END_TAGS and self._open and self._open[-1][0] == tag:
+            self._pop_to(len(self._open) - 1)
+        self._open.append((tag, hidden, bool(_ZERO_FONT_RE.search(_normalized_style(attrs)))))
+        self._hidden += hidden
+        if tag == "head":
+            self._in_head = True
 
     def handle_endtag(self, tag):
-        if tag in ("script", "style", "head") and self._skip:
-            self._skip -= 1
-        elif tag in self._BLOCK:
+        index = next((i for i in range(len(self._open) - 1, -1, -1)
+                      if self._open[i][0] == tag), None)
+        if index is None:
+            return  # stray end tag
+        self._pop_to(index)
+        if self._hidden == 0 and tag in self._BLOCK:
             self.parts.append("\n")
 
     def handle_data(self, data):
-        if not self._skip:
+        if self._hidden == 0 and not (self._open and self._open[-1][2]):
             self.parts.append(data)
 
 
 def html_to_text(html: str) -> str:
     parser = _HTMLToText()
     parser.feed(html)
+    parser.close()
     text = "".join(parser.parts)
     text = re.sub(r"[ \t\r\f\v]+", " ", text)
     text = re.sub(r" *\n *", "\n", text)
