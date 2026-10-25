@@ -1,0 +1,4 @@
+config.env
+.venv/
+__pycache__/
+certs/
