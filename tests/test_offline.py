@@ -88,6 +88,39 @@ class BodyTests(unittest.TestCase):
         self.assertNotIn("x{}", body)
 
 
+class HardeningTests(unittest.TestCase):
+    def test_sender_with_control_characters_is_refused(self):
+        cfg = mc.MailConfig("h", 993, "user@example.com", "pw", aliases=("*@example.com",))
+        for addr in ("a\nb@example.com", "a b@example.com", "a\x00@example.com", "a\r@example.com"):
+            with self.subTest(repr(addr)):
+                self.assertFalse(cfg.is_allowed_sender(addr))
+        self.assertTrue(cfg.is_allowed_sender(" User@Example.com "))
+
+    def test_malformed_utf7_from_server_is_kept(self):
+        for name in ("&A-", "&2AA-", "&!!!-"):
+            with self.subTest(name):
+                self.assertEqual(mc.imap_utf7_decode(name), name)
+        self.assertEqual(mc.imap_utf7_decode("Entw&APw-rfe"), "Entwürfe")
+
+    def test_folder_listing_survives_malformed_names(self):
+        line = b'(\\HasNoChildren) "." "&A-"'
+        self.assertEqual(mc.parse_list_line(line)["name"], "&A-")
+
+    def test_line_break_in_draft_header_is_a_mail_error(self):
+        client = mc.MailClient(mc.MailConfig("h", 993, "user@example.com", "pw"))
+        for subject in ("Hi\r\nBcc: evil@x.de", "a\nb"):
+            with self.subTest(repr(subject)):
+                with self.assertRaises(mc.MailError) as cm:
+                    client._build_draft("user@example.com", ["a@b.de"], None, None,
+                                        subject, "body", {})
+                self.assertIn("Invalid value", str(cm.exception))
+
+    def test_ordinary_draft_still_builds(self):
+        client = mc.MailClient(mc.MailConfig("h", 993, "user@example.com", "pw"))
+        msg = client._build_draft("user@example.com", ["a@b.de"], None, None, "Hi", "body", {})
+        self.assertEqual(msg["Subject"], "Hi")
+
+
 class HtmlToTextTests(unittest.TestCase):
     def test_hidden_content_is_dropped(self):
         for label, html in {

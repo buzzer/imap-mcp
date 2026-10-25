@@ -2,3 +2,7 @@ config.env
 .venv/
 __pycache__/
 certs/
+.env
+*.key
+*.pem
+*.crt

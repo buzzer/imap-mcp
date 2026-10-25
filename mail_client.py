@@ -132,6 +132,8 @@ class MailConfig:
 
     def is_allowed_sender(self, addr: str) -> bool:
         addr = addr.strip().lower()
+        if re.search(r"[\x00-\x20\x7f]", addr):  # no control characters or spaces
+            return False
         for allowed in self.sender_addresses():
             if allowed.startswith("*@"):
                 if addr.endswith(allowed[1:]) and addr.count("@") == 1:
@@ -210,7 +212,10 @@ def imap_utf7_decode(name: str) -> str:
             return "&"
         chunk = chunk.replace(",", "/")
         chunk += "=" * (-len(chunk) % 4)
-        return base64.b64decode(chunk).decode("utf-16-be")
+        try:
+            return base64.b64decode(chunk).decode("utf-16-be")
+        except ValueError:  # malformed name from the server: keep it as it is
+            return m.group(0)
 
     return re.sub(r"&([A-Za-z0-9+,]*)-", repl, name)
 
@@ -832,18 +837,22 @@ class MailClient:
             raise MailError("No recipient given.")
 
         msg = EmailMessage()
-        msg["Date"] = formatdate(localtime=True)
-        for name, value in thread_headers.items():
-            msg[name] = value
-        msg["From"] = formataddr((self.cfg.from_name, sender))
-        msg["Message-ID"] = make_msgid(domain=sender.rsplit("@", 1)[-1])
-        msg["To"] = to_header
-        if cc_header := _clean_addresses(cc):
-            msg["Cc"] = cc_header
-        if bcc_header := _clean_addresses(bcc):
-            msg["Bcc"] = bcc_header
-        msg["Subject"] = subject or "(kein Betreff)"  # German on purpose: part of the outgoing mail
-        msg.set_content(body)
+        try:
+            msg["Date"] = formatdate(localtime=True)
+            for name, value in thread_headers.items():
+                msg[name] = value
+            msg["From"] = formataddr((self.cfg.from_name, sender))
+            msg["Message-ID"] = make_msgid(domain=sender.rsplit("@", 1)[-1])
+            msg["To"] = to_header
+            if cc_header := _clean_addresses(cc):
+                msg["Cc"] = cc_header
+            if bcc_header := _clean_addresses(bcc):
+                msg["Bcc"] = bcc_header
+            # German on purpose: it becomes part of the outgoing mail.
+            msg["Subject"] = subject or "(kein Betreff)"
+            msg.set_content(body)
+        except ValueError as e:  # e.g. a line break in a header value
+            raise MailError(f"Invalid value in the draft: {e}") from e
         return msg
 
     def _append_draft(self, conn, msg: EmailMessage) -> tuple[str, int | None]:

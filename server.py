@@ -107,7 +107,7 @@ def build_server(clients: dict[str, MailClient], host: str = "127.0.0.1", port: 
             account: Account from list_accounts (empty = default account).
         """
         client = pick(account)
-        log.info("search [%s] folder=%s", client.cfg.name, folder)
+        log.info("search [%s] folder=%r", client.cfg.name, folder)
         return tag(await asyncio.to_thread(
             client.search_messages, folder, sender=sender, recipient=recipient,
             subject=subject, text=text, since=since, before=before,
@@ -127,7 +127,7 @@ def build_server(clients: dict[str, MailClient], host: str = "127.0.0.1", port: 
             account: Account the UID belongs to.
         """
         client = pick(account)
-        log.info("read [%s] folder=%s uid=%s", client.cfg.name, folder, uid)
+        log.info("read [%s] folder=%r uid=%s", client.cfg.name, folder, uid)
         return tag(await asyncio.to_thread(
             client.read_message, uid, folder, max_chars), account)
 
@@ -175,15 +175,22 @@ class BearerAuth:
         self.expected = f"Bearer {token}".encode()
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http":
-            got = dict(scope.get("headers") or []).get(b"authorization", b"").strip()
-            if not hmac.compare_digest(got, self.expected):
-                log.warning("401 from %s", (scope.get("client") or ("?",))[0])
-                await send({"type": "http.response.start", "status": 401,
-                            "headers": [(b"content-type", b"text/plain"),
-                                        (b"www-authenticate", b"Bearer")]})
-                await send({"type": "http.response.body", "body": b"Unauthorized"})
-                return
+        if scope["type"] == "lifespan":
+            await self.app(scope, receive, send)
+            return
+        if scope["type"] != "http":
+            # Fail closed: anything but HTTP (e.g. WebSocket) is not served at all.
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1008})
+            return
+        got = dict(scope.get("headers") or []).get(b"authorization", b"").strip()
+        if not hmac.compare_digest(got, self.expected):
+            log.warning("401 from %s", (scope.get("client") or ("?",))[0])
+            await send({"type": "http.response.start", "status": 401,
+                        "headers": [(b"content-type", b"text/plain"),
+                                    (b"www-authenticate", b"Bearer")]})
+            await send({"type": "http.response.body", "body": b"Unauthorized"})
+            return
         await self.app(scope, receive, send)
 
 
@@ -191,7 +198,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--transport", choices=("stdio", "http"), default="stdio")
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="Address for the HTTP transport (0.0.0.0 = all interfaces)")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--config", help="Path to config.env")
     parser.add_argument("--tls-cert", help="TLS certificate (PEM) for the HTTP transport; "

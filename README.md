@@ -94,6 +94,9 @@ sudo systemctl enable --now imap-mcp
 ```
 
 The endpoint is `https://<host>:8765/mcp` and requires `Authorization: Bearer <token>`.
+Without `--host` the server listens on `127.0.0.1` only; the systemd unit passes
+`--host 0.0.0.0` (all interfaces), so change it to your LAN address if you prefer.
+Anything but plain HTTP requests (e.g. WebSocket) is refused.
 Without `TLS_CERT`/`TLS_KEY` the server keeps running in plain text and logs a
 warning. The certificate is valid for 730 days; run `make-cert.sh` again afterwards
 and redistribute it.
@@ -121,8 +124,12 @@ they connect from Anthropic's cloud.
 
 ## Configuration
 
-See `config.env.example` for all keys. Every key can also be set as an environment
-variable; `MAIL_MCP_CONFIG` or `--config` selects another config file.
+See `config.env.example` for all keys (`MAIL_USER`, `MAIL_PASSWORD`, `MAIL_ADDRESS`,
+`MAIL_FROM_NAME`, `MAIL_ALIASES`, `IMAP_HOST`, `IMAP_PORT`, `IMAP_TIMEOUT`,
+`DRAFTS_FOLDER`, `ACCOUNTS`, `ACCOUNT_NAME`, `MCP_AUTH_TOKEN`, `TLS_CERT`, `TLS_KEY`; all
+but the last three can be prefixed with `<NAME>_` for additional accounts). Every key can
+also be set as an environment variable; `MAIL_MCP_CONFIG` or `--config` selects another
+config file.
 
 ### Additional account: iCloud
 
