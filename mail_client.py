@@ -17,6 +17,7 @@ import imaplib
 import os
 import re
 import ssl
+import stat
 import threading
 import time
 from contextlib import contextmanager
@@ -40,6 +41,17 @@ MAX_FETCH_BYTES = 2 * 1024 * 1024
 # Connection reuse: reconnect after POOL_MAX_IDLE seconds, check with NOOP after POOL_CHECK_AFTER.
 POOL_MAX_IDLE = 300.0
 POOL_CHECK_AFTER = 5.0
+# Attachments are limited to these types. The content must start with the matching magic
+# bytes, so a renamed file of another type is refused.
+ATTACHMENT_TYPES = {
+    ".pdf": ("application/pdf", b"%PDF-"),
+    ".png": ("image/png", b"\x89PNG\r\n\x1a\n"),
+    ".jpg": ("image/jpeg", b"\xff\xd8\xff"),
+    ".jpeg": ("image/jpeg", b"\xff\xd8\xff"),
+}
+DEFAULT_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
+DEFAULT_ATTACHMENT_MAX_TOTAL_BYTES = 15 * 1024 * 1024
+DEFAULT_ATTACHMENT_MAX_COUNT = 5
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
@@ -95,6 +107,11 @@ class MailConfig:
     aliases: tuple[str, ...] = ()
     name: str = "hetzner"
     address: str = ""
+    # Folder attachments may be taken from; None = attaching files is disabled.
+    attachment_dir: Path | None = None
+    attachment_max_bytes: int = DEFAULT_ATTACHMENT_MAX_BYTES
+    attachment_max_total_bytes: int = DEFAULT_ATTACHMENT_MAX_TOTAL_BYTES
+    attachment_max_count: int = DEFAULT_ATTACHMENT_MAX_COUNT
 
     @property
     def own_address(self) -> str:
@@ -113,6 +130,15 @@ class MailConfig:
             # Never guess a server: the password would be sent to the wrong provider.
             raise MailError(f"Account {name!r}: {prefix}IMAP_HOST is not set and there is "
                             "no default server for this account name.")
+        def get_int(key: str, default: int) -> int:
+            return _int(get(key, env.get(key, str(default))), prefix + key)
+
+        attachment_dir = get("ATTACHMENT_DIR", env.get("ATTACHMENT_DIR", "")).strip()
+        if attachment_dir:
+            attachment_dir = Path(attachment_dir).expanduser()
+            if not attachment_dir.is_dir():
+                raise MailError(f"Account {name!r}: {prefix}ATTACHMENT_DIR "
+                                f"{str(attachment_dir)!r} is not a directory.")
         return cls(
             name=name,
             imap_host=imap_host,
@@ -126,6 +152,13 @@ class MailConfig:
                          prefix + "IMAP_TIMEOUT"),
             aliases=tuple(a.strip().lower() for a in get("MAIL_ALIASES").split(",")
                           if a.strip()),
+            attachment_dir=attachment_dir or None,
+            attachment_max_bytes=get_int("ATTACHMENT_MAX_BYTES",
+                                         DEFAULT_ATTACHMENT_MAX_BYTES),
+            attachment_max_total_bytes=get_int("ATTACHMENT_MAX_TOTAL_BYTES",
+                                               DEFAULT_ATTACHMENT_MAX_TOTAL_BYTES),
+            attachment_max_count=get_int("ATTACHMENT_MAX_COUNT",
+                                         DEFAULT_ATTACHMENT_MAX_COUNT),
         )
 
     def sender_addresses(self) -> list[str]:
@@ -528,6 +561,80 @@ def _clean_addresses(value: str | list[str] | None) -> str:
     return ", ".join(out)
 
 
+def _attachment_path(root: Path, name: str) -> Path:
+    """Relative attachment name -> path below `root`; refuses anything that could leave
+    the folder (absolute paths, "..", symlinks) and hidden files or folders."""
+    if not isinstance(name, str) or not name.strip() or _CONTROL_RE.search(name) \
+            or "\\" in name:
+        raise MailError(f"Invalid attachment name: {name!r}")
+    parts = name.split("/")  # not PurePosixPath: it silently drops "." and "//"
+    if any(p in ("", ".", "..") or p.startswith(".") for p in parts):
+        raise MailError(f"Attachment {name!r} must be a relative path inside the "
+                        "attachment folder (no '..', no hidden files).")
+    path = root
+    for part in parts:
+        path = path / part
+        if path.is_symlink():
+            raise MailError(f"Attachment {name!r}: symbolic links are not allowed.")
+    return path
+
+
+def load_attachments(cfg: MailConfig, names: list[str] | None) -> list[tuple[str, str, bytes]]:
+    """Read the requested attachments -> [(filename, MIME type, content)].
+
+    Only files below cfg.attachment_dir with an allowed type (ATTACHMENT_TYPES), within
+    the size and count limits, are accepted. Raises MailError otherwise."""
+    if not names:
+        return []
+    if cfg.attachment_dir is None:
+        raise MailError("Attaching files is not enabled for this account "
+                        "(ATTACHMENT_DIR is not set).")
+    if len(names) > cfg.attachment_max_count:
+        raise MailError(f"Too many attachments ({len(names)}, max. "
+                        f"{cfg.attachment_max_count}).")
+    if len({str(n) for n in names}) != len(names):
+        raise MailError("The same attachment was given more than once.")
+    root = cfg.attachment_dir.resolve()
+    loaded: list[tuple[str, str, bytes]] = []
+    total = 0
+    for name in names:
+        path = _attachment_path(root, name)
+        ext = path.suffix.lower()
+        if ext not in ATTACHMENT_TYPES:
+            raise MailError(f"Attachment {name!r}: only "
+                            f"{', '.join(sorted(ATTACHMENT_TYPES))} files are allowed.")
+        mime, magic = ATTACHMENT_TYPES[ext]
+        try:
+            # O_NOFOLLOW closes the gap between the symlink check and opening the file.
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except OSError:
+            raise MailError(f"Attachment {name!r} not found or not readable.") from None
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode):  # also keeps fdopen away from directories
+                raise MailError(f"Attachment {name!r} is not a regular file.")
+            f = os.fdopen(fd, "rb")
+        except BaseException:
+            os.close(fd)
+            raise
+        with f:  # closes fd, also if a check below fails
+            if info.st_size > cfg.attachment_max_bytes:
+                raise MailError(f"Attachment {name!r} is too large ({info.st_size} bytes, "
+                                f"max. {cfg.attachment_max_bytes}).")
+            data = f.read(cfg.attachment_max_bytes + 1)
+        if len(data) > cfg.attachment_max_bytes:
+            raise MailError(f"Attachment {name!r} is too large "
+                            f"(max. {cfg.attachment_max_bytes} bytes).")
+        if not data.startswith(magic):
+            raise MailError(f"Attachment {name!r} does not look like a {ext} file.")
+        total += len(data)
+        if total > cfg.attachment_max_total_bytes:
+            raise MailError(f"Attachments are too large together (max. "
+                            f"{cfg.attachment_max_total_bytes} bytes).")
+        loaded.append((path.name, mime, data))
+    return loaded
+
+
 # --------------------------------------------------------------------------
 # Client
 # --------------------------------------------------------------------------
@@ -811,8 +918,11 @@ class MailClient:
                      reply_to_uid: int | None = None,
                      reply_folder: str = "INBOX",
                      quote_original: bool = True,
-                     from_address: str | None = None) -> dict:
+                     from_address: str | None = None,
+                     attachments: list[str] | None = None) -> dict:
         thread_headers: dict[str, str] = {}
+        # Read the files before connecting, so invalid input fails without IMAP traffic.
+        files = load_attachments(self.cfg, attachments)
         with self._connect() as conn:
             if reply_to_uid is not None:
                 _, original = self._fetch_full(conn, reply_folder, reply_to_uid)
@@ -825,7 +935,8 @@ class MailClient:
                     body = _quote_original(body, original)
 
             sender = (from_address or self.cfg.own_address).strip()
-            msg = self._build_draft(sender, to, cc, bcc, subject, body, thread_headers)
+            msg = self._build_draft(sender, to, cc, bcc, subject, body, thread_headers,
+                                    files)
             folder, saved_uid = self._append_draft(conn, msg)
         return {
             "saved_in": folder,
@@ -833,6 +944,7 @@ class MailClient:
             "uid": saved_uid,
             "to": str(msg["To"]),
             "subject": str(msg["Subject"]),
+            "attachments": [name for name, _, _ in files],
             "note": "Saved as a draft only, not sent.",
         }
 
@@ -854,7 +966,8 @@ class MailClient:
         }
 
     def _build_draft(self, sender: str, to, cc, bcc, subject: str, body: str,
-                     thread_headers: dict[str, str]) -> EmailMessage:
+                     thread_headers: dict[str, str],
+                     files: list[tuple[str, str, bytes]] = ()) -> EmailMessage:
         if not self.cfg.is_allowed_sender(sender):
             raise MailError(f"Sender {sender!r} is not permitted. Allowed: "
                             + ", ".join(self.cfg.sender_addresses()))
@@ -877,6 +990,10 @@ class MailClient:
             # German on purpose: it becomes part of the outgoing mail.
             msg["Subject"] = subject or "(kein Betreff)"
             msg.set_content(body)
+            for filename, mime, data in files:
+                maintype, subtype = mime.split("/")
+                msg.add_attachment(data, maintype=maintype, subtype=subtype,
+                                   filename=filename)
         except ValueError as e:  # e.g. a line break in a header value
             raise MailError(f"Invalid value in the draft: {e}") from e
         return msg

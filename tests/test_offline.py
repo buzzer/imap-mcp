@@ -3,7 +3,9 @@
 German strings in fixtures (umlauts, "Angebot") are deliberate test data for non-ASCII handling."""
 
 import imaplib
+import os
 import sys
+import tempfile
 import unittest
 from email.message import EmailMessage
 from email.policy import default
@@ -342,6 +344,123 @@ class ClientTests(unittest.TestCase):
     def test_header_injection_rejected(self):
         with self.assertRaises(Exception):
             self.client.create_draft(["a@b.de"], "x\r\nBcc: evil@x.de", "body")
+
+
+PDF = b"%PDF-1.4\n%test\n"
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 8
+
+
+class AttachmentTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name) / "att"
+        self.dir.mkdir()
+        self.outside = Path(tmp.name) / "outside.pdf"
+        self.outside.write_bytes(PDF)
+        (self.dir / "invoice.pdf").write_bytes(PDF)
+        (self.dir / "sub").mkdir()
+        (self.dir / "sub" / "pic.PNG").write_bytes(PNG)
+
+    def cfg(self, **kw):
+        kw.setdefault("attachment_dir", self.dir)
+        return mc.MailConfig("h", 993, "user@example.com", "pw", **kw)
+
+    def refused(self, names, **kw):
+        with self.assertRaises(mc.MailError) as cm:
+            mc.load_attachments(self.cfg(**kw), names)
+        return str(cm.exception)
+
+    def test_loads_allowed_files(self):
+        files = mc.load_attachments(self.cfg(), ["invoice.pdf", "sub/pic.PNG"])
+        self.assertEqual([(n, m) for n, m, _ in files],
+                         [("invoice.pdf", "application/pdf"), ("pic.PNG", "image/png")])
+
+    def test_nothing_requested_needs_no_config(self):
+        self.assertEqual(mc.load_attachments(self.cfg(attachment_dir=None), None), [])
+        self.assertEqual(mc.load_attachments(self.cfg(attachment_dir=None), []), [])
+
+    def test_disabled_without_directory(self):
+        self.assertIn("not enabled", self.refused(["invoice.pdf"], attachment_dir=None))
+
+    def test_path_escapes_are_refused(self):
+        for name in ("../outside.pdf", "/etc/passwd.pdf", "sub/../../outside.pdf",
+                     "sub\\..\\x.pdf", "a\nb.pdf", "", "./invoice.pdf"):
+            with self.subTest(repr(name)):
+                self.refused([name])
+
+    def test_symlinks_are_refused(self):
+        os.symlink(self.outside, self.dir / "link.pdf")
+        os.symlink(self.outside.parent, self.dir / "linkdir")
+        self.assertIn("symbolic", self.refused(["link.pdf"]))
+        self.assertIn("symbolic", self.refused(["linkdir/outside.pdf"]))
+
+    def test_hidden_files_are_refused(self):
+        (self.dir / ".secret.pdf").write_bytes(PDF)
+        (self.dir / ".hidden").mkdir()
+        (self.dir / ".hidden" / "a.pdf").write_bytes(PDF)
+        self.refused([".secret.pdf"])
+        self.refused([".hidden/a.pdf"])
+
+    def test_only_allowed_types(self):
+        for name in ("run.sh", "a.zip", "a.exe", "doc.docx", "noext"):
+            (self.dir / name).write_bytes(PDF)
+            with self.subTest(name):
+                self.assertIn("allowed", self.refused([name]))
+
+    def test_content_must_match_type(self):
+        (self.dir / "fake.pdf").write_bytes(b"#!/bin/sh\necho hi\n")
+        (self.dir / "fake.jpg").write_bytes(PNG)
+        self.assertIn("does not look like", self.refused(["fake.pdf"]))
+        self.assertIn("does not look like", self.refused(["fake.jpg"]))
+
+    def test_missing_directory_and_special_files(self):
+        self.assertIn("not found", self.refused(["nope.pdf"]))
+        (self.dir / "dir.pdf").mkdir()
+        self.refused(["dir.pdf"])
+
+    def test_limits(self):
+        (self.dir / "b.pdf").write_bytes(PDF)
+        self.assertIn("too large", self.refused(["invoice.pdf"], attachment_max_bytes=5))
+        self.assertIn("together", self.refused(["invoice.pdf", "b.pdf"],
+                                               attachment_max_total_bytes=len(PDF) + 1))
+        self.assertIn("Too many", self.refused(["invoice.pdf", "b.pdf"],
+                                               attachment_max_count=1))
+        self.assertIn("more than once", self.refused(["invoice.pdf", "invoice.pdf"]))
+
+    def test_draft_contains_attachment(self):
+        fake = FakeIMAP({1: _orig()})
+        with mock.patch.object(imaplib, "IMAP4_SSL", return_value=fake):
+            r = mc.MailClient(self.cfg()).create_draft(
+                ["a@b.de"], "Hi", "see attachment", attachments=["invoice.pdf"])
+        self.assertEqual(r["attachments"], ["invoice.pdf"])
+        d = message_from_bytes(fake.appended[0][2], policy=default)
+        (part,) = list(d.iter_attachments())
+        self.assertEqual((part.get_filename(), part.get_content_type()),
+                         ("invoice.pdf", "application/pdf"))
+        self.assertEqual(part.get_content(), PDF)
+        self.assertIn("see attachment", d.get_body().get_content())
+
+    def test_refused_attachment_means_no_draft(self):
+        fake = FakeIMAP({1: _orig()})
+        with mock.patch.object(imaplib, "IMAP4_SSL", return_value=fake):
+            with self.assertRaises(mc.MailError):
+                mc.MailClient(self.cfg()).create_draft(
+                    ["a@b.de"], "Hi", "x", attachments=["../outside.pdf"])
+        self.assertEqual(fake.appended, [])
+
+    def test_config_keys(self):
+        p = self.dir.parent / "acc.env"
+        p.write_text(f"MAIL_USER=a@b.de\nMAIL_PASSWORD=x\nATTACHMENT_DIR={self.dir}\n"
+                     "ATTACHMENT_MAX_COUNT=2\n", encoding="utf-8")
+        with mock.patch.dict("os.environ", {}, clear=True):
+            cfg = mc.load_accounts(p)["hetzner"]
+        self.assertEqual((cfg.attachment_dir, cfg.attachment_max_count), (self.dir, 2))
+        p.write_text("MAIL_USER=a@b.de\nMAIL_PASSWORD=x\nATTACHMENT_DIR=/nonexistent\n",
+                     encoding="utf-8")
+        with mock.patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(mc.MailError):
+                mc.load_accounts(p)
 
 
 class AccountLoadingTests(unittest.TestCase):

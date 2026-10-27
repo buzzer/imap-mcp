@@ -14,6 +14,9 @@ Design limits that reduce the impact of mistakes:
 - messages are fetched with `BODY.PEEK` and folders are opened read-only, except
   for the single `STORE` in `mark_read`;
 - sender addresses are restricted to the account address and configured aliases;
+- attachments are opt-in (`ATTACHMENT_DIR`), limited to PDF/PNG/JPEG below that one
+  folder (no `..`, symlinks or hidden files) with size and count limits; the draft
+  still has to be reviewed and sent by the user;
 - mail content is treated as untrusted data (prompt injection is still possible, so
   review every draft before sending it).
 

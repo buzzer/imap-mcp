@@ -20,6 +20,8 @@ the first configured account is used.
   flag on the given UIDs and nothing else.
 - **Sending is deliberately not possible.** `create_draft` stores a draft in the
   drafts folder; you review and send it yourself in your mail client.
+- Drafts can carry **attachments** (PDF, PNG, JPEG) taken from one configured folder
+  (`ATTACHMENT_DIR`, off by default). See [Attachments](#attachments).
 - Senders are limited to the account address plus configured aliases
   (`MAIL_ALIASES`, wildcards like `*@example.com` allowed). For replies, the address
   the original mail was sent to is chosen automatically.
@@ -128,7 +130,8 @@ they connect from Anthropic's cloud.
 
 See `config.env.example` for all keys (`MAIL_USER`, `MAIL_PASSWORD`, `MAIL_ADDRESS`,
 `MAIL_FROM_NAME`, `MAIL_ALIASES`, `IMAP_HOST`, `IMAP_PORT`, `IMAP_TIMEOUT`,
-`DRAFTS_FOLDER`, `ACCOUNTS`, `ACCOUNT_NAME`, `MCP_AUTH_TOKEN`, `TLS_CERT`, `TLS_KEY`; all
+`DRAFTS_FOLDER`, `ATTACHMENT_DIR`, `ATTACHMENT_MAX_BYTES`, `ATTACHMENT_MAX_TOTAL_BYTES`,
+`ATTACHMENT_MAX_COUNT`, `ACCOUNTS`, `ACCOUNT_NAME`, `MCP_AUTH_TOKEN`, `TLS_CERT`, `TLS_KEY`; all
 but the last three can be prefixed with `<NAME>_` for additional accounts). Every key can
 also be set as an environment variable; `MAIL_MCP_CONFIG` or `--config` selects another
 config file.
@@ -148,6 +151,47 @@ The password is an app-specific password from account.apple.com
 `mail.your-server.de:993` for `hetzner`. Every other account name needs
 `<NAME>_IMAP_HOST`; the server never guesses a host, so a password is not sent to the
 wrong provider.
+
+## Attachments
+
+`create_draft` accepts `attachments`, a list of file paths **relative to
+`ATTACHMENT_DIR`**. The feature is off until that key is set in `config.env`
+(`list_accounts` shows `attachments_enabled` per account). Rules, all enforced on the
+server:
+
+- only `.pdf`, `.png`, `.jpg`, `.jpeg`, and the content must start with the matching
+  magic bytes (a renamed file is refused);
+- only files below `ATTACHMENT_DIR`: absolute paths, `..`, symbolic links and hidden
+  files or folders (`.env`, `.ssh`, ...) are refused;
+- at most `ATTACHMENT_MAX_COUNT` files (default 5), `ATTACHMENT_MAX_BYTES` each
+  (default 10 MB) and `ATTACHMENT_MAX_TOTAL_BYTES` together (default 15 MB);
+- the draft is only stored if every attachment passes; the model never sees the file
+  content, only the names.
+
+### Suggested setup
+
+Use a dedicated, flat folder that holds nothing but files you are happy to attach.
+Everything in it can be attached by the model.
+
+```bash
+mkdir -p ~/mail-attachments
+chmod 700 ~/mail-attachments
+```
+
+```
+ATTACHMENT_DIR=/home/<user>/mail-attachments
+```
+
+- With the stdio transport over SSH the server reads the files as the SSH user.
+- Paths in the tool call are relative to that folder, e.g. `invoice-2026-10.pdf` or
+  `invoices/2026/invoice-2026-10.pdf`; absolute paths are refused.
+- The server only reads. Put files there yourself (`scp file.pdf host:mail-attachments/`,
+  `rsync`, Syncthing or a Samba share), then ask the assistant to attach them by name.
+- Several accounts can use separate folders with the prefix, e.g.
+  `ICLOUD_ATTACHMENT_DIR=/home/<user>/mail-attachments-icloud`.
+- With the systemd unit (`ProtectHome=read-only`) the service user needs read access;
+  the simplest way is a folder outside `/home`, e.g. `/opt/imap-mcp/attachments`.
+- Remove files you no longer need.
 
 ## Security
 
@@ -172,8 +216,8 @@ wrong provider.
 
 - Drafts are plain text only. The attribution line of a quoted reply
   ("Am … schrieb …:") and the placeholder subject "(kein Betreff)" are in German.
-- No attachments in drafts, no moving/deleting of messages; the only flag that can
-  be set is `\Seen` (via `mark_read`).
+- Attachments are limited to PDF/PNG/JPEG from one folder; no moving/deleting of
+  messages; the only flag that can be set is `\Seen` (via `mark_read`).
 - Tested against Hetzner (Dovecot) and iCloud only.
 
 ## Development
