@@ -208,13 +208,22 @@ class FakeIMAP:
                       b'(\\HasNoChildren \\Drafts) "." "Entw&APw-rfe"']
 
     def status(self, box, what): return "OK", [box.encode() + b" (MESSAGES 2 UNSEEN 1)"]
-    def select(self, box, readonly=False): return "OK", [str(len(self.messages)).encode()]
+    def select(self, box, readonly=False):
+        self.readonly = readonly
+        return "OK", [str(len(self.messages)).encode()]
 
     def uid(self, cmd, *args):
         if cmd == "SEARCH":
             self.searches.append((args, self.literal))
             self.literal = None
+            if args[0] == "UID":
+                found = [u for u in map(int, args[1].split(",")) if u in self.messages]
+                return "OK", [" ".join(map(str, found)).encode() or None]
             return "OK", [" ".join(str(u) for u in self.messages).encode()]
+        if cmd == "STORE":
+            assert not self.readonly, "STORE on a read-only folder"
+            self.stored = args
+            return "OK", [None]
         if cmd == "FETCH":
             out = []
             for u in args[0].split(","):
@@ -281,6 +290,27 @@ class ClientTests(unittest.TestCase):
         r = self.client.read_message(5)
         self.assertEqual(r["subject"], "Angebot Coaching")
         self.assertIn("Angebot schicken", r["body"])
+
+    def test_mark_read_sets_only_seen(self):
+        r = self.client.mark_read([9, 5, 7])
+        self.assertEqual(r["marked_read"], [5, 9])
+        self.assertEqual(r["not_found"], [7])
+        self.assertEqual(self.fake.stored, ("5,9", "+FLAGS.SILENT", "(\\Seen)"))
+
+    def test_mark_read_unknown_uids_store_nothing(self):
+        r = self.client.mark_read([7])
+        self.assertEqual(r["marked_read"], [])
+        self.assertFalse(hasattr(self.fake, "stored"))
+
+    def test_mark_read_rejects_bad_input(self):
+        for uids in ([], [0], ["5 +FLAGS (\\Deleted)"], list(range(1, 102))):
+            with self.subTest(uids=uids[:3]):
+                with self.assertRaises(mc.MailError):
+                    self.client.mark_read(uids)
+
+    def test_reading_stays_read_only(self):
+        self.client.read_message(5)
+        self.assertTrue(self.fake.readonly)
 
     def test_reply_draft(self):
         r = self.client.create_draft(None, "", "Gerne, anbei.", reply_to_uid=5)

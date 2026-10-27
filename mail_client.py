@@ -4,7 +4,8 @@ Layout of this file: configuration (MailConfig, load_accounts) -> helpers withou
 network access (folder names, IMAP responses, headers, message text) -> MailClient.
 
 Standard library only. Read access opens folders read-only and fetches messages
-with BODY.PEEK so nothing gets marked as read. Nothing is ever sent: drafts are
+with BODY.PEEK so nothing gets marked as read; the only write access to existing
+messages is mark_read, which sets the \\Seen flag. Nothing is ever sent: drafts are
 stored in the drafts folder via IMAP APPEND and sent by the user in their mail client.
 """
 
@@ -776,6 +777,31 @@ class MailClient:
             "size_bytes": meta.get("size_bytes"),
             "message_truncated": meta["truncated"],
         }
+
+    # ---- Flags --------------------------------------------------------
+
+    def mark_read(self, uids: list[int], folder: str = "INBOX") -> dict:
+        """Set \\Seen on the given UIDs; no other flag can be changed."""
+        try:
+            wanted = sorted({int(u) for u in uids})
+        except (TypeError, ValueError):
+            raise MailError("UIDs must be numbers.") from None
+        if not wanted:
+            raise MailError("No UIDs given.")
+        if len(wanted) > MAX_LIMIT or wanted[0] < 1:
+            raise MailError(f"Give 1 to {MAX_LIMIT} positive UIDs.")
+        uid_set = ",".join(map(str, wanted))
+        with self._connect() as conn:
+            self._select(conn, folder, readonly=False)
+            # STORE ignores unknown UIDs silently, so look up which ones exist first.
+            typ, data = conn.uid("SEARCH", "UID", uid_set)
+            existing = sorted(_search_result_uids(_check(typ, data, "SEARCH")))
+            if existing:
+                typ, data = conn.uid("STORE", ",".join(map(str, existing)),
+                                     "+FLAGS.SILENT", "(\\Seen)")
+                _check(typ, data, "STORE")
+        return {"folder": folder, "marked_read": existing,
+                "not_found": [u for u in wanted if u not in existing]}
 
     # ---- Drafts -------------------------------------------------------
 

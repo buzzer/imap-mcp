@@ -9,8 +9,10 @@ SSH, or HTTPS on a private LAN. Do not expose the HTTP port to the internet.
 
 Design limits that reduce the impact of mistakes:
 
-- no tool can send mail, delete, move or flag messages (drafts only);
-- messages are fetched with `BODY.PEEK` and folders are opened read-only;
+- no tool can send mail, delete or move messages (drafts only);
+- the only flag that can be set is `\Seen` (`mark_read`); no other flag can be changed;
+- messages are fetched with `BODY.PEEK` and folders are opened read-only, except
+  for the single `STORE` in `mark_read`;
 - sender addresses are restricted to the account address and configured aliases;
 - mail content is treated as untrusted data (prompt injection is still possible, so
   review every draft before sending it).

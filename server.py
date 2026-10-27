@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""MCP server for IMAP mailboxes (Hetzner, iCloud, ...): read, search, create drafts.
+"""MCP server for IMAP mailboxes (Hetzner, iCloud, ...): read, search, mark as read,
+create drafts.
 
 Usage:
   python server.py                      # stdio (e.g. via SSH from Claude Desktop)
@@ -28,7 +29,8 @@ Access to the user's mailboxes (several accounts, see list_accounts).
 - Nothing can be sent. create_draft only stores a draft, which the user
   reviews and sends themselves.
 - UIDs are per account and folder; pass the same account and folder to
-  read_message as you used for the search.
+  read_message and mark_read as you used for the search.
+- mark_read only marks messages as read, and only when the user asks for it.
 """
 
 log = logging.getLogger("mail-mcp")
@@ -130,6 +132,20 @@ def build_server(clients: dict[str, MailClient], host: str = "127.0.0.1", port: 
         log.info("read [%s] folder=%r uid=%s", client.cfg.name, folder, uid)
         return tag(await asyncio.to_thread(
             client.read_message, uid, folder, max_chars), account)
+
+    @mcp.tool()
+    async def mark_read(uids: list[int], folder: str = "INBOX",
+                        account: str | None = None) -> dict:
+        """Mark messages as read (sets the \\Seen flag, nothing else).
+
+        Args:
+            uids: UIDs from list_messages/search_messages (max. 100).
+            folder: Folder the UIDs belong to.
+            account: Account the UIDs belong to.
+        """
+        client = pick(account)
+        log.info("mark_read [%s] folder=%r uids=%s", client.cfg.name, folder, uids)
+        return tag(await asyncio.to_thread(client.mark_read, uids, folder), account)
 
     @mcp.tool()
     async def create_draft(subject: str = "", body: str = "",

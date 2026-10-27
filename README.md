@@ -11,11 +11,13 @@ Pi, but it works with any IMAP server that supports IMAPS (port 993).
 ## What it does
 
 **Tools:** `list_accounts`, `list_folders`, `list_messages`, `search_messages`,
-`read_message`, `create_draft`. Every tool has an `account` parameter; if omitted,
+`read_message`, `mark_read`, `create_draft`. Every tool has an `account` parameter; if omitted,
 the first configured account is used.
 
 - Reading is read-only: messages are fetched with `BODY.PEEK`, nothing is marked as
   read, moved or deleted.
+- `mark_read` is the only write access to existing messages: it sets the `\Seen`
+  flag on the given UIDs and nothing else.
 - **Sending is deliberately not possible.** `create_draft` stores a draft in the
   drafts folder; you review and send it yourself in your mail client.
 - Senders are limited to the account address plus configured aliases
@@ -170,7 +172,8 @@ wrong provider.
 
 - Drafts are plain text only. The attribution line of a quoted reply
   ("Am … schrieb …:") and the placeholder subject "(kein Betreff)" are in German.
-- No attachments in drafts, no moving/deleting/flagging of messages.
+- No attachments in drafts, no moving/deleting of messages; the only flag that can
+  be set is `\Seen` (via `mark_read`).
 - Tested against Hetzner (Dovecot) and iCloud only.
 
 ## Development
