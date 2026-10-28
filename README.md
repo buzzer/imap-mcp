@@ -131,7 +131,7 @@ they connect from Anthropic's cloud.
 See `config.env.example` for all keys (`MAIL_USER`, `MAIL_PASSWORD`, `MAIL_ADDRESS`,
 `MAIL_FROM_NAME`, `MAIL_ALIASES`, `IMAP_HOST`, `IMAP_PORT`, `IMAP_TIMEOUT`,
 `DRAFTS_FOLDER`, `ATTACHMENT_DIR`, `ATTACHMENT_MAX_BYTES`, `ATTACHMENT_MAX_TOTAL_BYTES`,
-`ATTACHMENT_MAX_COUNT`, `MARK_READ_ON_READ`, `ACCOUNTS`, `ACCOUNT_NAME`, `MCP_AUTH_TOKEN`,
+`ATTACHMENT_MAX_COUNT`, `MARK_READ_ON_READ`, `BCC_SELF`, `ACCOUNTS`, `ACCOUNT_NAME`, `MCP_AUTH_TOKEN`,
 `TLS_CERT`, `TLS_KEY`). The account keys up to `ATTACHMENT_MAX_COUNT` can be prefixed with
 `<NAME>_` for additional accounts; the remaining keys are global. Every key can
 also be set as an environment variable; `MAIL_MCP_CONFIG` or `--config` selects another
@@ -165,6 +165,14 @@ So that your local mail client shows what the assistant has already looked at,
 - The result has `unread` (state before reading) and `marked_read`. If the flag cannot
   be set, the message is still returned and `marked_read` is `false`.
 - Nothing but `\Seen` is ever set; messages that are already read are left untouched.
+
+## Bcc to yourself
+
+With `BCC_SELF=true` in `config.env` (global for all accounts, off by default),
+`create_draft` adds the sender address of the draft as Bcc, so a sent copy also lands in
+that mailbox. It is the address actually used as sender (account address or alias, see
+`from_address`). It is not added twice if it is already in To, Cc or Bcc. The result
+shows the final `bcc`, and `list_accounts` reports `bcc_self`.
 
 ## Attachments
 

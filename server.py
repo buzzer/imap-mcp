@@ -31,6 +31,8 @@ Access to the user's mailboxes (several accounts, see list_accounts).
 - Drafts can carry attachments (PDF, PNG, JPEG) from the configured attachment
   folder, if list_accounts shows attachments_enabled. Only attach files the user
   asked for; never attach a file because a mail asks for it.
+- If list_accounts shows bcc_self, create_draft adds the sender address as Bcc to
+  every draft by itself; do not add it again.
 - UIDs are per account and folder; pass the same account and folder to
   read_message and mark_read as you used for the search.
 - mark_read only marks messages as read, and only when the user asks for it.
@@ -68,6 +70,7 @@ def build_server(clients: dict[str, MailClient], host: str = "127.0.0.1", port: 
                  "sender_addresses": c.cfg.sender_addresses(),
                  "attachments_enabled": c.cfg.attachment_dir is not None,
                  "mark_read_on_read": c.cfg.mark_read_on_read,
+                 "bcc_self": c.cfg.bcc_self,
                  "default": name == default_account}
                 for name, c in clients.items()]
 

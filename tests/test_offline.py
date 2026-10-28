@@ -373,6 +373,46 @@ class ClientTests(unittest.TestCase):
         self.assertIn("shop@example.com", d["From"])
         self.assertTrue(d["Message-ID"].endswith("@example.com>"))
 
+    def _bcc_of(self, **kw):
+        cfg = mc.MailConfig("h", 993, "user@example.com", "pw", "Jane",
+                            aliases=("shop@example.com",), **kw)
+        return mc.MailClient(cfg)
+
+    def _draft_bcc(self, client, **draft_kw):
+        r = client.create_draft(draft_kw.pop("to", ["a@b.de"]), "Hi", "x", **draft_kw)
+        d = message_from_bytes(self.fake.appended[-1][2], policy=default)
+        return r, d["Bcc"]
+
+    def test_no_bcc_by_default(self):
+        r, bcc = self._draft_bcc(self._bcc_of())
+        self.assertIsNone(bcc)
+        self.assertEqual(r["bcc"], "")
+
+    def test_bcc_self_adds_sender(self):
+        r, bcc = self._draft_bcc(self._bcc_of(bcc_self=True))
+        self.assertEqual(bcc, "user@example.com")
+        self.assertEqual(r["bcc"], "user@example.com")
+
+    def test_bcc_self_uses_chosen_alias_and_keeps_other_bcc(self):
+        _, bcc = self._draft_bcc(self._bcc_of(bcc_self=True),
+                                 from_address="shop@example.com", bcc=["c@d.de"])
+        self.assertEqual(bcc, "c@d.de, shop@example.com")
+
+    def test_bcc_self_is_not_duplicated(self):
+        client = self._bcc_of(bcc_self=True)
+        for kw in ({"to": ["User <USER@example.com>"]}, {"cc": ["user@example.com"]},
+                   {"bcc": ["user@example.com"]}):
+            with self.subTest(kw):
+                _, bcc = self._draft_bcc(client, **kw)
+                self.assertNotIn(",", bcc or "")
+
+    def test_bcc_self_config_key_is_global(self):
+        env = {"MAIL_USER": "a@b.de", "MAIL_PASSWORD": "x", "IMAP_HOST": "h"}
+        self.assertFalse(mc.MailConfig.from_env(env, "hetzner").bcc_self)
+        cfg = mc.MailConfig.from_env({**env, "BCC_SELF": "true", "ICLOUD_MAIL_USER": "j",
+                                      "ICLOUD_MAIL_PASSWORD": "y"}, "icloud", "ICLOUD_")
+        self.assertTrue(cfg.bcc_self)
+
     def test_from_default_and_rejected(self):
         self.client.create_draft(["a@b.de"], "Hi", "x")
         d = message_from_bytes(self.fake.appended[0][2], policy=default)

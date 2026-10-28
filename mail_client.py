@@ -93,6 +93,10 @@ def _int(value: str, key: str) -> int:
         raise MailError(f"{key} must be a number, not {value!r}.") from None
 
 
+def _is_true(value: str) -> bool:
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
 @dataclass(frozen=True)
 class MailConfig:
     """One IMAP account. `user` is the login, `address` the own sender address
@@ -114,6 +118,8 @@ class MailConfig:
     attachment_max_count: int = DEFAULT_ATTACHMENT_MAX_COUNT
     # Set \\Seen on every message returned by read_message (global setting).
     mark_read_on_read: bool = False
+    # Add the sender address as Bcc to every draft (global setting).
+    bcc_self: bool = False
 
     @property
     def own_address(self) -> str:
@@ -154,9 +160,9 @@ class MailConfig:
                          prefix + "IMAP_TIMEOUT"),
             aliases=tuple(a.strip().lower() for a in get("MAIL_ALIASES").split(",")
                           if a.strip()),
-            # Global switch for all accounts, so deliberately not read with the prefix.
-            mark_read_on_read=env.get("MARK_READ_ON_READ", "").strip().lower()
-            in ("1", "true", "yes", "on"),
+            # Global switches for all accounts, so deliberately not read with the prefix.
+            mark_read_on_read=_is_true(env.get("MARK_READ_ON_READ", "")),
+            bcc_self=_is_true(env.get("BCC_SELF", "")),
             attachment_dir=attachment_dir or None,
             attachment_max_bytes=get_int("ATTACHMENT_MAX_BYTES",
                                          DEFAULT_ATTACHMENT_MAX_BYTES),
@@ -963,6 +969,7 @@ class MailClient:
             "from": sender,
             "uid": saved_uid,
             "to": str(msg["To"]),
+            "bcc": str(msg["Bcc"] or ""),
             "subject": str(msg["Subject"]),
             "attachments": [name for name, _, _ in files],
             "note": "Saved as a draft only, not sent.",
@@ -985,6 +992,16 @@ class MailClient:
             "from_address": self._matching_alias(original),
         }
 
+    def _bcc_header(self, sender: str, to_header: str, cc_header: str, bcc) -> str:
+        """Bcc header value; with cfg.bcc_self the sender is added unless already a recipient."""
+        bcc_header = _clean_addresses(bcc)
+        if not self.cfg.bcc_self:
+            return bcc_header
+        known = {addr.lower() for _, addr in getaddresses([to_header, cc_header, bcc_header])}
+        if sender.lower() in known:
+            return bcc_header
+        return ", ".join(filter(None, [bcc_header, formataddr(("", sender))]))
+
     def _build_draft(self, sender: str, to, cc, bcc, subject: str, body: str,
                      thread_headers: dict[str, str],
                      files: list[tuple[str, str, bytes]] = ()) -> EmailMessage:
@@ -1003,9 +1020,10 @@ class MailClient:
             msg["From"] = formataddr((self.cfg.from_name, sender))
             msg["Message-ID"] = make_msgid(domain=sender.rsplit("@", 1)[-1])
             msg["To"] = to_header
-            if cc_header := _clean_addresses(cc):
+            cc_header = _clean_addresses(cc)
+            if cc_header:
                 msg["Cc"] = cc_header
-            if bcc_header := _clean_addresses(bcc):
+            if bcc_header := self._bcc_header(sender, to_header, cc_header, bcc):
                 msg["Bcc"] = bcc_header
             # German on purpose: it becomes part of the outgoing mail.
             msg["Subject"] = subject or "(kein Betreff)"
