@@ -112,6 +112,8 @@ class MailConfig:
     attachment_max_bytes: int = DEFAULT_ATTACHMENT_MAX_BYTES
     attachment_max_total_bytes: int = DEFAULT_ATTACHMENT_MAX_TOTAL_BYTES
     attachment_max_count: int = DEFAULT_ATTACHMENT_MAX_COUNT
+    # Set \\Seen on every message returned by read_message (global setting).
+    mark_read_on_read: bool = False
 
     @property
     def own_address(self) -> str:
@@ -152,6 +154,9 @@ class MailConfig:
                          prefix + "IMAP_TIMEOUT"),
             aliases=tuple(a.strip().lower() for a in get("MAIL_ALIASES").split(",")
                           if a.strip()),
+            # Global switch for all accounts, so deliberately not read with the prefix.
+            mark_read_on_read=env.get("MARK_READ_ON_READ", "").strip().lower()
+            in ("1", "true", "yes", "on"),
             attachment_dir=attachment_dir or None,
             attachment_max_bytes=get_int("ATTACHMENT_MAX_BYTES",
                                          DEFAULT_ATTACHMENT_MAX_BYTES),
@@ -862,9 +867,19 @@ class MailClient:
 
     def read_message(self, uid: int, folder: str = "INBOX",
                      max_chars: int = DEFAULT_BODY_CHARS) -> dict:
+        """Read a message; with cfg.mark_read_on_read it is marked \\Seen afterwards.
+
+        "unread" in the result is the state before reading. A failure to set the flag
+        does not fail the read: the result says marked_read=False instead."""
         max_chars = max(500, min(max_chars, 200_000))
+        marked = False
         with self._connect() as conn:
             meta, msg = self._fetch_full(conn, folder, uid)
+            if self.cfg.mark_read_on_read and "\\Seen" not in meta.get("flags", []):
+                try:
+                    marked = bool(self._set_seen(conn, folder, [int(uid)]))
+                except MailError as e:
+                    log.warning("[%s] could not mark uid=%s read: %s", self.cfg.name, uid, e)
         body, attachments = extract_body(msg)
         truncated = len(body) > max_chars
         return {
@@ -878,6 +893,7 @@ class MailClient:
             "subject": _decoded_header(msg, "Subject"),
             "message_id": _header(msg, "Message-ID"),
             "unread": "\\Seen" not in meta.get("flags", []),
+            "marked_read": marked,
             "attachments": attachments,
             "body": body[:max_chars],
             "body_truncated": truncated,
@@ -886,6 +902,18 @@ class MailClient:
         }
 
     # ---- Flags --------------------------------------------------------
+
+    def _set_seen(self, conn, folder: str, uids: list[int]) -> list[int]:
+        """Set \\Seen on the UIDs that exist in `folder` -> those UIDs. Nothing else is stored."""
+        self._select(conn, folder, readonly=False)
+        # STORE ignores unknown UIDs silently, so look up which ones exist first.
+        typ, data = conn.uid("SEARCH", "UID", ",".join(map(str, uids)))
+        existing = sorted(_search_result_uids(_check(typ, data, "SEARCH")))
+        if existing:
+            typ, data = conn.uid("STORE", ",".join(map(str, existing)),
+                                 "+FLAGS.SILENT", "(\\Seen)")
+            _check(typ, data, "STORE")
+        return existing
 
     def mark_read(self, uids: list[int], folder: str = "INBOX") -> dict:
         """Set \\Seen on the given UIDs; no other flag can be changed."""
@@ -897,16 +925,8 @@ class MailClient:
             raise MailError("No UIDs given.")
         if len(wanted) > MAX_LIMIT or wanted[0] < 1:
             raise MailError(f"Give 1 to {MAX_LIMIT} positive UIDs.")
-        uid_set = ",".join(map(str, wanted))
         with self._connect() as conn:
-            self._select(conn, folder, readonly=False)
-            # STORE ignores unknown UIDs silently, so look up which ones exist first.
-            typ, data = conn.uid("SEARCH", "UID", uid_set)
-            existing = sorted(_search_result_uids(_check(typ, data, "SEARCH")))
-            if existing:
-                typ, data = conn.uid("STORE", ",".join(map(str, existing)),
-                                     "+FLAGS.SILENT", "(\\Seen)")
-                _check(typ, data, "STORE")
+            existing = self._set_seen(conn, folder, wanted)
         return {"folder": folder, "marked_read": existing,
                 "not_found": [u for u in wanted if u not in existing]}
 

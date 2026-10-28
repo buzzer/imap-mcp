@@ -10,9 +10,10 @@ SSH, or HTTPS on a private LAN. Do not expose the HTTP port to the internet.
 Design limits that reduce the impact of mistakes:
 
 - no tool can send mail, delete or move messages (drafts only);
-- the only flag that can be set is `\Seen` (`mark_read`); no other flag can be changed;
+- the only flag that can be set is `\Seen` (`mark_read`, or `read_message` if
+  `MARK_READ_ON_READ` is enabled); no other flag can be changed;
 - messages are fetched with `BODY.PEEK` and folders are opened read-only, except
-  for the single `STORE` in `mark_read`;
+  for the single `STORE` that sets `\Seen`;
 - sender addresses are restricted to the account address and configured aliases;
 - attachments are opt-in (`ATTACHMENT_DIR`), limited to PDF/PNG/JPEG below that one
   folder (no `..`, symlinks or hidden files) with size and count limits; the draft

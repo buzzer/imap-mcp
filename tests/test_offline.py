@@ -293,6 +293,50 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(r["subject"], "Angebot Coaching")
         self.assertIn("Angebot schicken", r["body"])
 
+    def test_read_message_leaves_flag_alone_by_default(self):
+        r = self.client.read_message(5)
+        self.assertEqual((r["unread"], r["marked_read"]), (True, False))
+        self.assertFalse(hasattr(self.fake, "stored"))
+
+    def test_read_message_marks_read_when_enabled(self):
+        cfg = mc.MailConfig("h", 993, "user@example.com", "pw", mark_read_on_read=True)
+        r = mc.MailClient(cfg).read_message(5)
+        self.assertEqual((r["unread"], r["marked_read"]), (True, True))
+        self.assertEqual(self.fake.stored, ("5", "+FLAGS.SILENT", "(\\Seen)"))
+
+    def test_failing_flag_update_does_not_fail_the_read(self):
+        client = mc.MailClient(mc.MailConfig("h", 993, "user@example.com", "pw",
+                                             mark_read_on_read=True))
+        with mock.patch.object(mc.MailClient, "_set_seen",
+                               side_effect=mc.MailError("STORE failed")):
+            r = client.read_message(5)
+        self.assertIn("Angebot schicken", r["body"])
+        self.assertFalse(r["marked_read"])
+
+    def test_already_seen_message_is_not_stored_again(self):
+        meta = {"flags": ["\\Seen"], "size_bytes": 10, "truncated": False}
+        msg = message_from_bytes(self.fake.messages[5], policy=default)
+        client = mc.MailClient(mc.MailConfig("h", 993, "user@example.com", "pw",
+                                             mark_read_on_read=True))
+        with mock.patch.object(mc.MailClient, "_fetch_full", return_value=(meta, msg)):
+            r = client.read_message(5)
+        self.assertEqual((r["unread"], r["marked_read"]), (False, False))
+        self.assertFalse(hasattr(self.fake, "stored"))
+
+    def test_config_key(self):
+        env = {"MAIL_USER": "a@b.de", "MAIL_PASSWORD": "x", "IMAP_HOST": "h"}
+        self.assertFalse(mc.MailConfig.from_env(env, "hetzner").mark_read_on_read)
+        for value in ("true", "1", "Yes"):
+            cfg = mc.MailConfig.from_env({**env, "MARK_READ_ON_READ": value}, "hetzner")
+            self.assertTrue(cfg.mark_read_on_read)
+        # global: applies to prefixed accounts, a prefixed key has no effect
+        cfg = mc.MailConfig.from_env({**env, "ICLOUD_MAIL_USER": "j", "ICLOUD_MAIL_PASSWORD": "y",
+                                      "ICLOUD_MARK_READ_ON_READ": "true"}, "icloud", "ICLOUD_")
+        self.assertFalse(cfg.mark_read_on_read)
+        cfg = mc.MailConfig.from_env({**env, "MARK_READ_ON_READ": "true", "ICLOUD_MAIL_USER": "j",
+                                      "ICLOUD_MAIL_PASSWORD": "y"}, "icloud", "ICLOUD_")
+        self.assertTrue(cfg.mark_read_on_read)
+
     def test_mark_read_sets_only_seen(self):
         r = self.client.mark_read([9, 5, 7])
         self.assertEqual(r["marked_read"], [5, 9])

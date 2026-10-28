@@ -15,9 +15,9 @@ Pi, but it works with any IMAP server that supports IMAPS (port 993).
 the first configured account is used.
 
 - Reading is read-only: messages are fetched with `BODY.PEEK`, nothing is marked as
-  read, moved or deleted.
-- `mark_read` is the only write access to existing messages: it sets the `\Seen`
-  flag on the given UIDs and nothing else.
+  read, moved or deleted by default.
+- The only write access to existing messages is the `\Seen` flag, set by `mark_read`
+  or, if enabled, by `read_message` itself. See [Read status](#read-status).
 - **Sending is deliberately not possible.** `create_draft` stores a draft in the
   drafts folder; you review and send it yourself in your mail client.
 - Drafts can carry **attachments** (PDF, PNG, JPEG) taken from one configured folder
@@ -131,8 +131,9 @@ they connect from Anthropic's cloud.
 See `config.env.example` for all keys (`MAIL_USER`, `MAIL_PASSWORD`, `MAIL_ADDRESS`,
 `MAIL_FROM_NAME`, `MAIL_ALIASES`, `IMAP_HOST`, `IMAP_PORT`, `IMAP_TIMEOUT`,
 `DRAFTS_FOLDER`, `ATTACHMENT_DIR`, `ATTACHMENT_MAX_BYTES`, `ATTACHMENT_MAX_TOTAL_BYTES`,
-`ATTACHMENT_MAX_COUNT`, `ACCOUNTS`, `ACCOUNT_NAME`, `MCP_AUTH_TOKEN`, `TLS_CERT`, `TLS_KEY`; all
-but the last three can be prefixed with `<NAME>_` for additional accounts). Every key can
+`ATTACHMENT_MAX_COUNT`, `MARK_READ_ON_READ`, `ACCOUNTS`, `ACCOUNT_NAME`, `MCP_AUTH_TOKEN`,
+`TLS_CERT`, `TLS_KEY`). The account keys up to `ATTACHMENT_MAX_COUNT` can be prefixed with
+`<NAME>_` for additional accounts; the remaining keys are global. Every key can
 also be set as an environment variable; `MAIL_MCP_CONFIG` or `--config` selects another
 config file.
 
@@ -151,6 +152,19 @@ The password is an app-specific password from account.apple.com
 `mail.your-server.de:993` for `hetzner`. Every other account name needs
 `<NAME>_IMAP_HOST`; the server never guesses a host, so a password is not sent to the
 wrong provider.
+
+## Read status
+
+So that your local mail client shows what the assistant has already looked at,
+`read_message` can set the `\Seen` flag on every message it returns:
+
+- `MARK_READ_ON_READ=true` in `config.env` switches this on for **all accounts**
+  (one global option, off by default). There is no per-call or per-account setting.
+- Only `read_message` does this. Listing and searching show headers only and never
+  change a flag; `mark_read` stays available for messages processed otherwise.
+- The result has `unread` (state before reading) and `marked_read`. If the flag cannot
+  be set, the message is still returned and `marked_read` is `false`.
+- Nothing but `\Seen` is ever set; messages that are already read are left untouched.
 
 ## Attachments
 

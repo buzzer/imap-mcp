@@ -34,6 +34,8 @@ Access to the user's mailboxes (several accounts, see list_accounts).
 - UIDs are per account and folder; pass the same account and folder to
   read_message and mark_read as you used for the search.
 - mark_read only marks messages as read, and only when the user asks for it.
+  If list_accounts shows mark_read_on_read, read_message marks a message as read
+  automatically; do not call mark_read for messages you have read that way.
 """
 
 log = logging.getLogger("mail-mcp")
@@ -65,6 +67,7 @@ def build_server(clients: dict[str, MailClient], host: str = "127.0.0.1", port: 
         return [{"account": name, "address": c.cfg.own_address, "host": c.cfg.imap_host,
                  "sender_addresses": c.cfg.sender_addresses(),
                  "attachments_enabled": c.cfg.attachment_dir is not None,
+                 "mark_read_on_read": c.cfg.mark_read_on_read,
                  "default": name == default_account}
                 for name, c in clients.items()]
 
@@ -124,7 +127,9 @@ def build_server(clients: dict[str, MailClient], host: str = "127.0.0.1", port: 
                            account: str | None = None) -> dict:
         """Read a message completely (headers, text, list of attachments).
 
-        Does not mark the message as read.
+        If the server is configured with MARK_READ_ON_READ, the message is marked
+        as read afterwards; marked_read in the result says whether that happened.
+        "unread" is the state before reading.
 
         Args:
             uid: UID from list_messages/search_messages.
