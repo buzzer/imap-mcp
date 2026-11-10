@@ -126,6 +126,41 @@ copy of `server.crt` **on the client machine**:
 The custom connectors in Claude's settings do not work for a LAN address, because
 they connect from Anthropic's cloud.
 
+## 2c. Alternative: Docker (local stdio)
+
+A container image for amd64 and arm64 is published at `ghcr.io/buzzer/imap-mcp`; the
+server is listed in the [MCP registry](https://registry.modelcontextprotocol.io) as
+`io.github.buzzer/imap-mcp`. The client starts the container on demand and passes the
+configuration as environment variables:
+
+```json
+{
+  "mcpServers": {
+    "mail": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm",
+               "-e", "IMAP_HOST", "-e", "MAIL_USER", "-e", "MAIL_PASSWORD",
+               "ghcr.io/buzzer/imap-mcp:latest"],
+      "env": {
+        "IMAP_HOST": "imap.example.com",
+        "MAIL_USER": "user@example.com",
+        "MAIL_PASSWORD": "app-password"
+      }
+    }
+  }
+}
+```
+
+Every key from [Configuration](#configuration) can be passed the same way. For several
+accounts it is easier to mount a config file:
+`-v /path/to/config.env:/config.env:ro -e MAIL_MCP_CONFIG=/config.env`. The container
+runs as UID 10001, so the file must be readable for that user. For attachments, mount
+the folder read-only and set `ATTACHMENT_DIR` to the path inside the container.
+
+A release is made by setting the new version in `server.json` (`version` and the image
+tag in `identifier`) and pushing a matching tag such as `v0.2.0`; the `publish`
+workflow then builds the image and updates the registry entry.
+
 ## Configuration
 
 See `config.env.example` for all keys (`MAIL_USER`, `MAIL_PASSWORD`, `MAIL_ADDRESS`,

@@ -1,0 +1,5 @@
+# Allowlist: only what the image needs. Keeps config.env and certificates out.
+*
+!requirements.txt
+!server.py
+!mail_client.py

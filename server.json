@@ -1,0 +1,79 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.buzzer/imap-mcp",
+  "title": "IMAP Mail",
+  "description": "Read and search IMAP mailboxes and create drafts. Sending and deleting are not possible.",
+  "repository": {
+    "url": "https://github.com/buzzer/imap-mcp",
+    "source": "github"
+  },
+  "version": "0.2.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/buzzer/imap-mcp:0.2.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "IMAP_HOST",
+          "description": "IMAP server host name (IMAPS), e.g. imap.example.com",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "MAIL_USER",
+          "description": "IMAP login, usually the mail address",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "MAIL_PASSWORD",
+          "description": "IMAP password; an app-specific password where the provider requires one",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": true
+        },
+        {
+          "name": "IMAP_PORT",
+          "description": "IMAPS port",
+          "format": "number",
+          "default": "993"
+        },
+        {
+          "name": "MAIL_ADDRESS",
+          "description": "Own sender address, if it differs from the login",
+          "format": "string"
+        },
+        {
+          "name": "MAIL_FROM_NAME",
+          "description": "Display name used as sender of drafts",
+          "format": "string"
+        },
+        {
+          "name": "MAIL_ALIASES",
+          "description": "Additional allowed sender addresses, comma-separated; *@example.com allows a whole domain",
+          "format": "string"
+        },
+        {
+          "name": "DRAFTS_FOLDER",
+          "description": "Drafts folder, if it is not detected automatically",
+          "format": "string"
+        },
+        {
+          "name": "MARK_READ_ON_READ",
+          "description": "read_message marks every message it returns as read",
+          "format": "boolean",
+          "default": "false"
+        },
+        {
+          "name": "BCC_SELF",
+          "description": "Add the sender address as Bcc to every draft",
+          "format": "boolean",
+          "default": "false"
+        }
+      ]
+    }
+  ]
+}
