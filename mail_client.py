@@ -12,25 +12,27 @@ stored in the drafts folder via IMAP APPEND and sent by the user in their mail c
 from __future__ import annotations
 
 import base64
-import logging
 import imaplib
+import logging
 import os
 import re
 import ssl
 import stat
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from email import message_from_bytes
 from email.header import decode_header, make_header
 from email.message import EmailMessage, Message
-from email.policy import SMTP, default as default_policy
-from email.utils import formataddr, formatdate, getaddresses, make_msgid, parseaddr
+from email.policy import SMTP
+from email.policy import default as default_policy
+from email.utils import formataddr, formatdate, getaddresses, make_msgid
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Iterator
+from typing import ClassVar
 
 log = logging.getLogger("mail-mcp")
 
@@ -126,7 +128,7 @@ class MailConfig:
         return (self.address or self.user).lower()
 
     @classmethod
-    def from_env(cls, env: dict[str, str], name: str, prefix: str = "") -> "MailConfig":
+    def from_env(cls, env: dict[str, str], name: str, prefix: str = "") -> MailConfig:
         def get(key: str, default: str = "") -> str:
             return env.get(prefix + key, default)
 
@@ -441,7 +443,7 @@ class _HTMLToText(HTMLParser):
     missing end tags (common in mail HTML) cannot swallow the rest of the message.
     """
 
-    _BLOCK = {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6",
+    _BLOCK: ClassVar[set[str]] = {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6",
               "blockquote", "table", "section", "article", "header", "footer"}
 
     def __init__(self) -> None:

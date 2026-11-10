@@ -7,9 +7,9 @@ import os
 import sys
 import tempfile
 import unittest
+from email import message_from_bytes
 from email.message import EmailMessage
 from email.policy import default
-from email import message_from_bytes
 from pathlib import Path
 from unittest import mock
 
@@ -50,7 +50,7 @@ class FetchParsingTests(unittest.TestCase):
     def test_parse(self):
         data = [(b'1 (UID 42 FLAGS (\\Seen \\Answered) RFC822.SIZE 1234 BODY[HEADER.FIELDS (FROM)] {20}',
                  b"From: a@b.de\r\n\r\n"), b")"]
-        (meta, raw), = mc.parse_fetch(data)
+        (meta, _raw), = mc.parse_fetch(data)
         self.assertEqual(meta["uid"], 42)
         self.assertEqual(meta["size_bytes"], 1234)
         self.assertEqual(meta["flags"], ["\\Seen", "\\Answered"])
@@ -284,7 +284,7 @@ class ClientTests(unittest.TestCase):
         self.client.search_messages(subject="Grüße", sender="kunde", since="2026-10-01")
         literals = [lit for _, lit in self.fake.searches if lit]
         self.assertEqual(literals, ["Grüße".encode()])
-        ascii_args = [a for a, lit in self.fake.searches if not lit][0]
+        ascii_args = next(a for a, lit in self.fake.searches if not lit)
         self.assertIn("SINCE 01-Oct-2026", ascii_args)
         self.assertIn('FROM "kunde"', ascii_args)
 
@@ -350,9 +350,9 @@ class ClientTests(unittest.TestCase):
 
     def test_mark_read_rejects_bad_input(self):
         for uids in ([], [0], ["5 +FLAGS (\\Deleted)"], list(range(1, 102))):
-            with self.subTest(uids=uids[:3]):
-                with self.assertRaises(mc.MailError):
-                    self.client.mark_read(uids)
+            with self.subTest(uids=uids[:3]), \
+                    self.assertRaises(mc.MailError):
+                self.client.mark_read(uids)
 
     def test_reading_stays_read_only(self):
         self.client.read_message(5)
@@ -426,7 +426,7 @@ class ClientTests(unittest.TestCase):
         self.assertFalse(cfg.is_allowed_sender("x@example.com.evil.de"))
 
     def test_header_injection_rejected(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises((ValueError, mc.MailError)):
             self.client.create_draft(["a@b.de"], "x\r\nBcc: evil@x.de", "body")
 
 
@@ -527,10 +527,10 @@ class AttachmentTests(unittest.TestCase):
 
     def test_refused_attachment_means_no_draft(self):
         fake = FakeIMAP({1: _orig()})
-        with mock.patch.object(imaplib, "IMAP4_SSL", return_value=fake):
-            with self.assertRaises(mc.MailError):
-                mc.MailClient(self.cfg()).create_draft(
-                    ["a@b.de"], "Hi", "x", attachments=["../outside.pdf"])
+        with mock.patch.object(imaplib, "IMAP4_SSL", return_value=fake), \
+                self.assertRaises(mc.MailError):
+            mc.MailClient(self.cfg()).create_draft(
+                ["a@b.de"], "Hi", "x", attachments=["../outside.pdf"])
         self.assertEqual(fake.appended, [])
 
     def test_config_keys(self):
@@ -542,9 +542,9 @@ class AttachmentTests(unittest.TestCase):
         self.assertEqual((cfg.attachment_dir, cfg.attachment_max_count), (self.dir, 2))
         p.write_text("MAIL_USER=a@b.de\nMAIL_PASSWORD=x\nATTACHMENT_DIR=/nonexistent\n",
                      encoding="utf-8")
-        with mock.patch.dict("os.environ", {}, clear=True):
-            with self.assertRaises(mc.MailError):
-                mc.load_accounts(p)
+        with mock.patch.dict("os.environ", {}, clear=True), \
+                self.assertRaises(mc.MailError):
+            mc.load_accounts(p)
 
 
 class AccountLoadingTests(unittest.TestCase):
@@ -645,9 +645,9 @@ class SecurityAndParsingTests(unittest.TestCase):
         client = mc.MailClient(mc.MailConfig("h", 993, "u@x.de", "pw"))
         fake = mock.MagicMock()
         fake.list.side_effect = TimeoutError("timed out")
-        with mock.patch.object(imaplib, "IMAP4_SSL", return_value=fake):
-            with self.assertRaises(mc.MailError):
-                client.list_folders()
+        with mock.patch.object(imaplib, "IMAP4_SSL", return_value=fake), \
+                self.assertRaises(mc.MailError):
+            client.list_folders()
 
     def test_config_path_env_name(self):
         with mock.patch.dict("os.environ", {"MAIL_MCP_CONFIG": "/new.env"}):
@@ -680,9 +680,9 @@ class PoolAndLimitTests(FakeServerTestCase):
         fake = FakeIMAP({1: _orig()})
         c = self._client(fake)
         c.list_messages()
-        with mock.patch.object(fake, "select", side_effect=OSError("reset")):
-            with self.assertRaises(mc.MailError):
-                c.list_messages()
+        with mock.patch.object(fake, "select", side_effect=OSError("reset")), \
+                self.assertRaises(mc.MailError):
+            c.list_messages()
         self.assertTrue(fake.logged_out)
         c.list_messages()
         self.assertEqual(self.ctor.call_count, 2)
