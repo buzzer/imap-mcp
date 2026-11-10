@@ -157,10 +157,6 @@ accounts it is easier to mount a config file:
 runs as UID 10001, so the file must be readable for that user. For attachments, mount
 the folder read-only and set `ATTACHMENT_DIR` to the path inside the container.
 
-A release is made by setting the new version in `server.json` (`version` and the image
-tag in `identifier`) and pushing a matching tag such as `v0.2.0`; the `publish`
-workflow then builds the image and updates the registry entry.
-
 ## Configuration
 
 See `config.env.example` for all keys (`MAIL_USER`, `MAIL_PASSWORD`, `MAIL_ADDRESS`,
@@ -282,6 +278,34 @@ ATTACHMENT_DIR=/home/<user>/mail-attachments
 ```bash
 python -m unittest discover -s tests    # no network and no MCP SDK needed
 ```
+
+### Releases
+
+The server is distributed as a container image on `ghcr.io/buzzer/imap-mcp` and listed
+in the MCP registry as `io.github.buzzer/imap-mcp`. Both are updated by the `publish`
+workflow (`.github/workflows/publish.yml`) when a version tag is pushed:
+
+1. Set the new version in `server.json` in **two** places: `version` and the image tag
+   at the end of `packages[0].identifier`.
+2. Commit, then tag and push: `git tag v0.3.0 && git push origin main v0.3.0`.
+   The workflow fails if the tag and `server.json` do not agree.
+3. Check the result:
+   `curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.buzzer/imap-mcp"`
+
+Things to know:
+
+- The registry only stores metadata and verifies ownership through the image label
+  `io.modelcontextprotocol.server.name` in the `Dockerfile`; it must stay equal to
+  `name` in `server.json`.
+- The workflow logs in to the registry with GitHub OIDC, so no secret or token is
+  needed; the namespace `io.github.buzzer` is tied to the GitHub account.
+- New configuration keys that users should see in clients belong in
+  `environmentVariables` in `server.json` as well as in `config.env.example`.
+- `mcp-publisher` is pinned by version and SHA-256 in the workflow
+  (`MCP_PUBLISHER_VERSION`, `MCP_PUBLISHER_SHA256`). To update, take the checksum of
+  `mcp-publisher_linux_amd64.tar.gz` from the `registry_<version>_checksums.txt` of the
+  [release](https://github.com/modelcontextprotocol/registry/releases).
+- `server.json` can be checked locally with `mcp-publisher validate`.
 
 ## License
 
