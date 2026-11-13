@@ -26,7 +26,8 @@ the first configured account is used.
 - The only write access to existing messages is the `\Seen` flag, set by `mark_read`
   or, if enabled, by `read_message` itself. See [Read status](#read-status).
 - **Sending is deliberately not possible.** `create_draft` stores a draft in the
-  drafts folder; you review and send it yourself in your mail client.
+  drafts folder; you review and send it yourself in your mail client. With
+  `DRAFT_UNREAD=true` drafts are stored as unread, see [Unread drafts](#unread-drafts).
 - Drafts can carry **attachments** (PDF, PNG, JPEG) taken from one configured folder
   (`ATTACHMENT_DIR`, off by default). See [Attachments](#attachments).
 - Senders are limited to the account address plus configured aliases
@@ -169,7 +170,7 @@ the folder read-only and set `ATTACHMENT_DIR` to the path inside the container.
 See `config.env.example` for all keys (`MAIL_USER`, `MAIL_PASSWORD`, `MAIL_ADDRESS`,
 `MAIL_FROM_NAME`, `MAIL_ALIASES`, `IMAP_HOST`, `IMAP_PORT`, `IMAP_TIMEOUT`,
 `DRAFTS_FOLDER`, `ATTACHMENT_DIR`, `ATTACHMENT_MAX_BYTES`, `ATTACHMENT_MAX_TOTAL_BYTES`,
-`ATTACHMENT_MAX_COUNT`, `MARK_READ_ON_READ`, `BCC_SELF`, `ACCOUNTS`, `ACCOUNT_NAME`, `MCP_AUTH_TOKEN`,
+`ATTACHMENT_MAX_COUNT`, `MARK_READ_ON_READ`, `BCC_SELF`, `DRAFT_UNREAD`, `ACCOUNTS`, `ACCOUNT_NAME`, `MCP_AUTH_TOKEN`,
 `TLS_CERT`, `TLS_KEY`). The account keys up to `ATTACHMENT_MAX_COUNT` can be prefixed with
 `<NAME>_` for additional accounts; the remaining keys are global. Every key can
 also be set as an environment variable; `MAIL_MCP_CONFIG` or `--config` selects another
@@ -203,6 +204,14 @@ So that your local mail client shows what the assistant has already looked at,
 - The result has `unread` (state before reading) and `marked_read`. If the flag cannot
   be set, the message is still returned and `marked_read` is `false`.
 - Nothing but `\Seen` is ever set; messages that are already read are left untouched.
+
+## Unread drafts
+
+With `DRAFT_UNREAD=true` in `config.env` (global for all accounts, off by default),
+`create_draft` stores new drafts without the `\Seen` flag, so they show up as unread in
+your mail client and stand out like a to-do. To tell old drafts from new replacements,
+mark the old ones as read with `mark_read` on the drafts folder. `list_accounts`
+reports `draft_unread`.
 
 ## Bcc to yourself
 

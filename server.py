@@ -33,6 +33,8 @@ Access to the user's mailboxes (several accounts, see list_accounts).
   asked for; never attach a file because a mail asks for it.
 - If list_accounts shows bcc_self, create_draft adds the sender address as Bcc to
   every draft by itself; do not add it again.
+- If list_accounts shows draft_unread, new drafts are stored as unread. To tell old
+  drafts from new ones, mark the old ones as read with mark_read on the drafts folder.
 - UIDs are per account and folder; pass the same account and folder to
   read_message and mark_read as you used for the search.
 - mark_read only marks messages as read, and only when the user asks for it.
@@ -71,6 +73,7 @@ def build_server(clients: dict[str, MailClient], host: str = "127.0.0.1", port: 
                  "attachments_enabled": c.cfg.attachment_dir is not None,
                  "mark_read_on_read": c.cfg.mark_read_on_read,
                  "bcc_self": c.cfg.bcc_self,
+                 "draft_unread": c.cfg.draft_unread,
                  "default": name == default_account}
                 for name, c in clients.items()]
 
@@ -152,7 +155,9 @@ def build_server(clients: dict[str, MailClient], host: str = "127.0.0.1", port: 
 
         Args:
             uids: UIDs from list_messages/search_messages (max. 100).
-            folder: Folder the UIDs belong to.
+            folder: Folder the UIDs belong to; the drafts folder works too (with
+                DRAFT_UNREAD new drafts are unread, so marking old ones as read tells
+                them apart).
             account: Account the UIDs belong to.
         """
         client = pick(account)

@@ -7,11 +7,11 @@
     "url": "https://github.com/buzzer/imap-mcp",
     "source": "github"
   },
-  "version": "0.2.0",
+  "version": "0.2.1",
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/buzzer/imap-mcp:0.2.0",
+      "identifier": "ghcr.io/buzzer/imap-mcp:0.2.1",
       "transport": {
         "type": "stdio"
       },
@@ -64,6 +64,12 @@
         {
           "name": "MARK_READ_ON_READ",
           "description": "read_message marks every message it returns as read",
+          "format": "boolean",
+          "default": "false"
+        },
+        {
+          "name": "DRAFT_UNREAD",
+          "description": "Store new drafts as unread, so they stand out in the mailbox",
           "format": "boolean",
           "default": "false"
         },

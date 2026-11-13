@@ -365,6 +365,7 @@ class ClientTests(unittest.TestCase):
         box, flags, raw = self.fake.appended[0]
         self.assertEqual(box, '"Entw&APw-rfe"')
         self.assertIn("\\Draft", flags)
+        self.assertIn("\\Seen", flags)
         d = message_from_bytes(raw, policy=default)
         self.assertEqual(d["Subject"], "Re: Angebot Coaching")
         self.assertEqual(d["In-Reply-To"], "<orig@example.com>")
@@ -412,6 +413,19 @@ class ClientTests(unittest.TestCase):
         cfg = mc.MailConfig.from_env({**env, "BCC_SELF": "true", "ICLOUD_MAIL_USER": "j",
                                       "ICLOUD_MAIL_PASSWORD": "y"}, "icloud", "ICLOUD_")
         self.assertTrue(cfg.bcc_self)
+
+    def test_draft_unread_omits_seen(self):
+        self._bcc_of(draft_unread=True).create_draft(["a@b.de"], "Hi", "x")
+        flags = self.fake.appended[-1][1]
+        self.assertIn("\\Draft", flags)
+        self.assertNotIn("\\Seen", flags)
+
+    def test_draft_unread_config_key_is_global(self):
+        env = {"MAIL_USER": "a@b.de", "MAIL_PASSWORD": "x", "IMAP_HOST": "h"}
+        self.assertFalse(mc.MailConfig.from_env(env, "hetzner").draft_unread)
+        cfg = mc.MailConfig.from_env({**env, "DRAFT_UNREAD": "true", "ICLOUD_MAIL_USER": "j",
+                                      "ICLOUD_MAIL_PASSWORD": "y"}, "icloud", "ICLOUD_")
+        self.assertTrue(cfg.draft_unread)
 
     def test_from_default_and_rejected(self):
         self.client.create_draft(["a@b.de"], "Hi", "x")

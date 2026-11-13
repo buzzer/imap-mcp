@@ -122,6 +122,8 @@ class MailConfig:
     mark_read_on_read: bool = False
     # Add the sender address as Bcc to every draft (global setting).
     bcc_self: bool = False
+    # Store new drafts without \\Seen so they show up as unread (global setting).
+    draft_unread: bool = False
 
     @property
     def own_address(self) -> str:
@@ -165,6 +167,7 @@ class MailConfig:
             # Global switches for all accounts, so deliberately not read with the prefix.
             mark_read_on_read=_is_true(env.get("MARK_READ_ON_READ", "")),
             bcc_self=_is_true(env.get("BCC_SELF", "")),
+            draft_unread=_is_true(env.get("DRAFT_UNREAD", "")),
             attachment_dir=attachment_dir or None,
             attachment_max_bytes=get_int("ATTACHMENT_MAX_BYTES",
                                          DEFAULT_ATTACHMENT_MAX_BYTES),
@@ -1039,9 +1042,13 @@ class MailClient:
         return msg
 
     def _append_draft(self, conn, msg: EmailMessage) -> tuple[str, int | None]:
-        """Store the message in the drafts folder -> (folder, UID or None)."""
+        """Store the message in the drafts folder -> (folder, UID or None).
+
+        With cfg.draft_unread the draft is stored without \\Seen, so it shows up as unread
+        in the mail client, like a to-do. mark_read on the drafts folder clears that."""
         folder = self._drafts_folder(conn)
-        typ, data = conn.append(quote_mailbox(folder), "(\\Draft \\Seen)",
+        flags = "(\\Draft)" if self.cfg.draft_unread else "(\\Draft \\Seen)"
+        typ, data = conn.append(quote_mailbox(folder), flags,
                                 imaplib.Time2Internaldate(time.time()),
                                 msg.as_bytes(policy=SMTP))
         _check(typ, data, "Entwurf speichern (APPEND)")
