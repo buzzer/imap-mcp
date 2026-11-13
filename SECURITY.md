@@ -7,6 +7,10 @@ intended for a **trusted home network**. The HTTP transport uses a single static
 bearer token without rate limiting; the recommended setup is the stdio transport over
 SSH, or HTTPS on a private LAN. Do not expose the HTTP port to the internet.
 
+The server can read the full content of every configured mailbox. If you install it
+from a registry listing or a third-party marketplace, use an app-specific password
+instead of your main password where your provider offers one.
+
 Design limits that reduce the impact of mistakes:
 
 - no tool can send mail, delete or move messages (drafts only);

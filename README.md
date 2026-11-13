@@ -7,6 +7,13 @@ Pi, but it works with any IMAP server that supports IMAPS (port 993).
 
 > **Status:** a personal project, published as-is. It is meant for a trusted home
 > network, not for the open internet. See [Security](#security) and `SECURITY.md`.
+>
+> If you found this server through a registry listing or a third-party marketplace,
+> read this before entering credentials. Use an app-specific password instead of
+> your main password where your provider offers one. The server, and the assistant
+> using it, can see the full content of every mailbox you configure. Mail content is
+> untrusted and can contain prompt injection, so always review drafts yourself before
+> sending them. Do not expose the HTTP transport to the internet.
 
 ## What it does
 
